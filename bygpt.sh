@@ -6,9 +6,9 @@ CONFIG_FILE="$CODEX_DIR/config.toml"
 AUTH_FILE="$CODEX_DIR/auth.json"
 LOCAL_SCRIPT="$CODEX_DIR/manage_codex.sh"
 
-# 内置的 URL
-URL1="https://anyrouter.top/v1"
-URL2="https://pmpjfbhq.cn-nb1.rainapp.top/v1"
+# 内置的 URL（修复：去掉了末尾的 /v1）
+URL1="https://anyrouter.top"
+URL2="https://pmpjfbhq.cn-nb1.rainapp.top"
 
 # 获取当前的 Shell 配置文件路径
 get_shell_rc() {
@@ -19,7 +19,7 @@ get_shell_rc() {
     fi
 }
 
-# 初始化配置文件（如果不存在的话）
+# 初始化配置文件
 init_files() {
     if [ ! -d "$CODEX_DIR" ]; then
         mkdir -p "$CODEX_DIR"
@@ -45,7 +45,7 @@ EOF
     fi
 }
 
-# 1. 读取当前的 Key 和 URL（不脱敏，完全显示）
+# 1. 读取当前的 Key 和 URL（不脱敏）
 view_current_config() {
     echo "🔍 === 当前配置状态 ==="
     
@@ -57,7 +57,7 @@ view_current_config() {
         echo "当前 Base URL: ❌ 配置文件 config.toml 不存在"
     fi
 
-    # 读取 API Key（完整输出）
+    # 读取 API Key
     if [ -f "$AUTH_FILE" ]; then
         if command -v node &> /dev/null; then
             current_key=$(node -e "const fs=require('fs'); console.log(JSON.parse(fs.readFileSync('$AUTH_FILE', 'utf8')).OPENAI_API_KEY);")
@@ -100,7 +100,7 @@ update_apikey() {
 
 # 3. 切换 URL
 switch_url() {
-    echo "请选择要切换的 base_url:"
+    echo "请选择要切换的 base_url (已自动剔除 /v1):"
     echo "1) $URL1 (默认 AnyRouter)"
     echo "2) $URL2 (备用 RainApp 端点)"
     read -p "请输入序号 [1 或 2]: " choice
@@ -120,29 +120,25 @@ switch_url() {
     echo "✅ base_url 已成功切换为: $target_url"
 }
 
-# 4. 测试连通性与稳定性 (测延迟、算平均值、评估稳定性)
+# 4. 测试连通性与稳定性
 test_connectivity() {
     echo "正在测试 URL 连通性、延迟与稳定性 (每项测试 3 次)..."
     echo "------------------------------------------------------------"
     
     for url in "$URL1" "$URL2"; do
-        echo "测试目标: $url"
+        # 实际测试时加上 /v1 探测其 API 根目录是否存活
+        test_url="${url}/v1"
+        echo "测试目标: $test_url"
         
         total_time=0
         success_count=0
         fail_count=0
         
         for i in {1..3}; do
-            # 使用 curl 的 -w 参数精准抓取时间（单位：秒），设置 3 秒超时
-            # time_connect: 建立 TCP 连接的时间
-            # http_code: 状态码
-            result=$(curl -o /dev/null -s -w "%{time_connect} %{http_code}" --connect-timeout 3 "$url")
+            result=$(curl -o /dev/null -s -w "%{time_connect} %{http_code}" --connect-timeout 3 "$test_url")
             
-            # 提取延迟和状态码
             delay_sec=$(echo $result | cut -d' ' -f1)
             status_code=$(echo $result | cut -d' ' -f2)
-            
-            # 将秒转换为毫秒 (保留整数)
             delay_ms=$(echo "$delay_sec * 1000" | awk '{print int($1)}')
             
             if [ "$status_code" -ne 000 ] && [ "$delay_ms" -gt 0 ]; then
@@ -153,10 +149,9 @@ test_connectivity() {
                 echo "  第 $i 次: ❌ 超时或连接失败"
                 fail_count=$((fail_count + 1))
             fi
-            sleep 0.2 # 稍作停顿
+            sleep 0.2
         done
         
-        # 计算并输出统计结果
         if [ $success_count -gt 0 ]; then
             avg_delay=$((total_time / success_count))
             loss_rate=$((fail_count * 100 / 3))
@@ -178,7 +173,7 @@ test_connectivity() {
     done
 }
 
-# 5. 卸载配置文件 (~/.codex 内的 json/toml)
+# 5. 卸载配置文件
 uninstall_config() {
     if [ ! -d "$CODEX_DIR" ]; then
         echo "⚠️ 未发现 $CODEX_DIR 目录，无需卸载。"
@@ -209,18 +204,15 @@ uninstall_config() {
     esac
 }
 
-# 6. 注册为本地快捷指令 bpgpt并固化脚本
+# 6. 注册为本地快捷指令 bpgpt
 register_shortcut() {
     mkdir -p "$CODEX_DIR"
     
-    # 如果检测到是远程流执行（或者不是存放在指定目录的脚本），就固化一份到本地
     if [ "$0" = "bash" ] || [ ! -f "$LOCAL_SCRIPT" ]; then
         echo "📦 正在将当前运行的最新代码持久化保存到本地: $LOCAL_SCRIPT"
-        # 抓取当前运行脚本的源码，如果是管道执行，则尝试克隆或需要用户从本地保存
         cat "$0" > "$LOCAL_SCRIPT" 2>/dev/null
         if [ $? -ne 0 ] || [ ! -s "$LOCAL_SCRIPT" ]; then
-             echo "⚠️ 远程一键运行时无法直接用 \$0 复制源码。"
-             echo "提示：请直接拷贝此脚本保存到 $LOCAL_SCRIPT 后再执行注册。"
+             echo "⚠️ 远程一键运行时无法直接复制源码，请手动保存到 $LOCAL_SCRIPT。"
              return
         fi
     fi
@@ -228,13 +220,12 @@ register_shortcut() {
     chmod +x "$LOCAL_SCRIPT"
     SHELL_RC=$(get_shell_rc)
 
-    # 检查是否已经注册过
     if grep -q "alias bpgpt=" "$SHELL_RC"; then
-        echo "💡 快捷指令 'bpgpt' 已经存在于 $SHELL_RC 中，无需重复注册。"
+        echo "💡 快捷指令 'bpgpt' 已经存在于 $SHELL_RC 中。"
     else
         echo "alias bpgpt=\"$LOCAL_SCRIPT\"" >> "$SHELL_RC"
-        echo "✅ 快捷指令 'bpgpt' 已成功注册到 $SHELL_RC ！"
-        echo "👉 请运行 'source $SHELL_RC' 或重启终端使指令生效。"
+        echo "✅ 快捷指令 'bpgpt' 已成功注册！"
+        echo "👉 请运行 'source $SHELL_RC' 使指令生效。"
     fi
 }
 
@@ -243,7 +234,6 @@ uninstall_shortcut_and_script() {
     echo "⚠️ 正在启动【快捷指令与脚本实体】卸载程序..."
     SHELL_RC=$(get_shell_rc)
     
-    # 1. 移除 Alias 快捷方式
     if grep -q "alias bpgpt=" "$SHELL_RC"; then
         if [[ "$OSTYPE" == "darwin"* ]]; then
             sed -i "" "/alias bpgpt=/d" "$SHELL_RC"
@@ -251,23 +241,18 @@ uninstall_shortcut_and_script() {
             sed -i "/alias bpgpt=/d" "$SHELL_RC"
         fi
         echo "🗑️  已从 $SHELL_RC 中移除 'bpgpt' 快捷指令。"
-        echo "👉 提示：当前终端缓存可能还在，重启终端或执行 'unalias bpgpt' 可立即生效。"
     else
-        echo "💡 未在 $SHELL_RC 中发现 'bpgpt' 快捷指令，无需清理。"
+        echo "💡 未发现 'bpgpt' 快捷指令。"
     fi
 
-    # 2. 移除脚本实体
     if [ -f "$LOCAL_SCRIPT" ]; then
         rm -f "$LOCAL_SCRIPT"
         echo "🗑️  已成功删除本地脚本实体: $LOCAL_SCRIPT"
-    else
-        echo "💡 本地未发现脚本实体文件。"
     fi
     
-    echo "✅ 清理完毕！您现在可以放心去远程 curl 最新的代码了。"
+    echo "✅ 清理完毕！"
     exit 0
 }
-
 
 # 主菜单循环
 while true; do
@@ -275,11 +260,11 @@ while true; do
     echo "=== Codex/AnyRouter 配置管理器 ==="
     echo "1. 查看当前 Key 和 URL 状态 (明文)"
     echo "2. 替换 API Key"
-    echo "3. 切换 Base URL"
+    echo "3. 切换 Base URL (不带v1)"
     echo "4. 测试内置 URL 连通性"
     echo "5. 卸载/清理配置文件 (toml/json)"
     echo "6. 将本脚本固化并注册为快捷指令 (bpgpt)"
-    echo "7. ❌ 仅卸载本地快捷方式与脚本实体 (方便取最新代码)"
+    echo "7. ❌ 仅卸载本地快捷方式与脚本实体"
     echo "8. 退出"
     read -p "请选择操作 [1-8]: " menu_choice
 
