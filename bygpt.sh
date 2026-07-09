@@ -136,6 +136,10 @@ uninstall_shortcut_and_script() {
     exit 0
 }
 
+# 确保初次运行创建目录结构
+init_files
+
+# 主循环入口
 while true; do
     echo -e "\n=== Codex/AnyRouter 配置管理器 ==="
     echo "1. 查看当前 Key 和 URL 状态 (明文)"
@@ -149,8 +153,8 @@ while true; do
     read -p "请选择操作 [1-8]: " menu_choice
     case $menu_choice in
         1) view_current_config ;;
-        2) init_files; update_apikey ;;
-        3) init_files; switch_url ;;
+        2) update_apikey ;;
+        3) switch_url ;;
         4) test_connectivity ;;
         5) uninstall_config ;;
         6) register_shortcut ;;
@@ -160,3 +164,5 @@ while true; do
     esac
 done
 EOF
+chmod +x ~/.codex/manage_codex.sh
+~ ~/.codex/manage_codex.sh
