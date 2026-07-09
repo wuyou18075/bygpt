@@ -120,23 +120,62 @@ switch_url() {
     echo "✅ base_url 已成功切换为: $target_url"
 }
 
-# 4. 测试连通性
+# 4. 测试连通性与稳定性 (测延迟、算平均值、评估稳定性)
 test_connectivity() {
-    echo "正在测试 URL 连通性 (延迟/响应状态)..."
-    echo "----------------------------------------"
+    echo "正在测试 URL 连通性、延迟与稳定性 (每项测试 3 次)..."
+    echo "------------------------------------------------------------"
+    
     for url in "$URL1" "$URL2"; do
-        echo -n "测试 $url ... "
-        status_code=$(curl -o /dev/null -s -w "%{http_code}" --connect-timeout 5 "$url")
+        echo "测试目标: $url"
         
-        if [ "$status_code" -eq 200 ] || [ "$status_code" -eq 401 ] || [ "$status_code" -eq 404 ]; then
-            echo "正常 (HTTP 状态码: $status_code)"
-        elif [ "$status_code" -eq 000 ]; then
-            echo "❌ 无法连接 (超时或网络阻断)"
+        total_time=0
+        success_count=0
+        fail_count=0
+        
+        for i in {1..3}; do
+            # 使用 curl 的 -w 参数精准抓取时间（单位：秒），设置 3 秒超时
+            # time_connect: 建立 TCP 连接的时间
+            # http_code: 状态码
+            result=$(curl -o /dev/null -s -w "%{time_connect} %{http_code}" --connect-timeout 3 "$url")
+            
+            # 提取延迟和状态码
+            delay_sec=$(echo $result | cut -d' ' -f1)
+            status_code=$(echo $result | cut -d' ' -f2)
+            
+            # 将秒转换为毫秒 (保留整数)
+            delay_ms=$(echo "$delay_sec * 1000" | awk '{print int($1)}')
+            
+            if [ "$status_code" -ne 000 ] && [ "$delay_ms" -gt 0 ]; then
+                echo "  第 $i 次: 成功 | 延迟: ${delay_ms}ms | HTTP 状态码: $status_code"
+                total_time=$((total_time + delay_ms))
+                success_count=$((success_count + 1))
+            else
+                echo "  第 $i 次: ❌ 超时或连接失败"
+                fail_count=$((fail_count + 1))
+            fi
+            sleep 0.2 # 稍作停顿
+        done
+        
+        # 计算并输出统计结果
+        if [ $success_count -gt 0 ]; then
+            avg_delay=$((total_time / success_count))
+            loss_rate=$((fail_count * 100 / 3))
+            
+            echo -n "📊 统计结果: 平均延迟: ${avg_delay}ms | 丢包率: ${loss_rate}% | 稳定性评估: "
+            if [ $loss_rate -eq 0 ] && [ $avg_delay -lt 100 ]; then
+                echo "🟢 极佳 (延迟低且稳定)"
+            elif [ $loss_rate -eq 0 ] && [ $avg_delay -lt 300 ]; then
+                echo "🟡 良好 (网络连通，延迟中等)"
+            elif [ $loss_rate -gt 0 ] && [ $loss_rate -lt 100 ]; then
+                echo "🟠 不稳定 (存在丢包/抖动)"
+            else
+                echo "🔴 极差 (延迟高或频繁超时)"
+            fi
         else
-            echo "⚠️ 异常 (HTTP 状态码: $status_code)"
+            echo "📊 统计结果: ❌ 3次测试全部失败，该节点当前不可用！"
         fi
+        echo "------------------------------------------------------------"
     done
-    echo "----------------------------------------"
 }
 
 # 5. 卸载配置文件 (~/.codex 内的 json/toml)
